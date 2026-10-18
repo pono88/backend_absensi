@@ -45,6 +45,32 @@ const storage = new CloudinaryStorage({
 
 const upload = multer({ storage: storage });
 
+// Endpoint Hapus Anggota (Khusus Admin Global)
+app.delete('/api/users/:id', (req, res) => {
+  const { id } = req.params;
+  const { peran_pengirim } = req.body;
+
+  // Validasi Peran
+  if (peran_pengirim !== 'admin_global') {
+    return res.status(403).json({ 
+      message: 'Akses ditolak. Fitur ini hanya dapat dilakukan oleh Admin Global.' 
+    });
+  }
+
+  // Hapus data pengguna dari database Aiven
+  const sql = 'DELETE FROM users WHERE id = ?';
+  db.query(sql, [id], (err, result) => {
+    if (err) {
+      console.error('Gagal menghapus user:', err);
+      return res.status(500).json({ message: 'Terjadi kesalahan pada server.' });
+    }
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Anggota tidak ditemukan.' });
+    }
+    res.json({ message: 'Anggota berhasil dihapus.' });
+  });
+});
+
 // -------------------------------------------------------------------------
 // ENDPOINT: PRESENSI MASUK (POST /api/absensi/masuk)
 // -------------------------------------------------------------------------
