@@ -190,41 +190,41 @@ app.post('/api/absensi/keluar', upload.single('foto'), (req, res) => {
 // -----------------------------------------------------------------------------
 // ENDPOINT: AMBIL DATA ANGGOTA SESUAI HIRARKI (GET /api/users)
 // -----------------------------------------------------------------------------
-app.get('/api/users', (req, res) => {
-  const requesterId = req.query.requester_id;
+app.get('/api/users', async (req, res) => {
+  const { requester_id } = req.query;
 
-  if (!requesterId) {
-    return res.status(400).json({ success: false, message: 'ID Peminta (requester_id) diperlukan.' });
+  // Validasi jika requester_id kosong atau bernilai string 'null'
+  if (!requester_id || requester_id === 'null' || requester_id === 'undefined') {
+    return res.status(400).json({ message: 'ID pengguna tidak valid. Silakan login ulang.' });
   }
 
-  db.query('SELECT peran FROM users WHERE id = ?', [requesterId], (err, userResults) => {
-    if (err || userResults.length === 0) {
-      return res.status(403).json({ success: false, message: 'Akses ditolak.' });
+  try {
+    // Ambil data peran dari pemanggil
+    const [requesters] = await db.query('SELECT id, peran FROM users WHERE id = ?', [requester_id]);
+
+    if (!requesters || requesters.length === 0) {
+      return res.status(404).json({ message: 'Akun pemanggil tidak ditemukan.' });
     }
 
-    const role = userResults[0].peran;
-    let query = '';
-    let params = [];
+    const requesterRole = (requesters[0].peran || '').toLowerCase().trim();
 
-    if (role === 'admin_global') {
-      // Admin Global: Melihat SELURUH anggota tanpa terkecuali
-      query = 'SELECT id, nip, nama_lengkap, email, peran, created_at FROM users ORDER BY id DESC';
-    } else if (role === 'manajer') {
-      // Manajer: Melihat semua anggota KECUALI Admin Global
-      query = 'SELECT id, nip, nama_lengkap, email, peran, created_at FROM users WHERE peran != "admin_global" ORDER BY id DESC';
-    } else {
-      // Admin dan Karyawan: Hanya melihat akun milik sendiri
-      query = 'SELECT id, nip, nama_lengkap, email, peran, created_at FROM users WHERE id = ?';
-      params = [requesterId];
+    let sqlQuery = 'SELECT id, nip, nama_lengkap, email, peran FROM users';
+    let queryParams = [];
+
+    // Jika manajer atau admin biasa, sembunyikan admin_global
+    if (requesterRole === 'manajer' || requesterRole === 'admin') {
+      sqlQuery += ' WHERE LOWER(peran) != ?';
+      queryParams.push('admin_global');
     }
 
-    db.query(query, params, (err, results) => {
-      if (err) {
-        return res.status(500).json({ success: false, message: 'Gagal mengambil data anggota.', error: err.message });
-      }
-      return res.status(200).json({ success: true, data: results });
-    });
-  });
+    sqlQuery += ' ORDER BY id DESC';
+
+    const [users] = await db.query(sqlQuery, queryParams);
+    return res.status(200).json({ data: users });
+  } catch (err) {
+    console.error('Error fetch users:', err);
+    return res.status(500).json({ message: 'Gagal memuat data anggota dari server.' });
+  }
 });
 
 // -----------------------------------------------------------------------------
