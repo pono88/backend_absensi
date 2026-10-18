@@ -12,21 +12,41 @@ app.use(express.json());
 const PORT = process.env.PORT || 8000;
 
 // 1. Koneksi Database MySQL Aiven
-const db = mysql.createConnection({
+// const db = mysql.createConnection({
+//   host: process.env.DB_HOST,
+//   port: process.env.DB_PORT,
+//   user: process.env.DB_USER,
+//   password: process.env.DB_PASSWORD,
+//   database: process.env.DB_NAME
+// });
+
+// db.connect((err) => {
+//   if (err) {
+//     console.error('Gagal terhubung ke database Aiven:', err);
+//   } else {
+//     console.log('Berhasil terhubung ke database Aiven MySQL!');
+//   }
+// });
+
+const mysql = require('mysql2/promise');
+
+// 1. Koneksi Database MySQL Aiven dengan Pool & SSL
+const db = mysql.createPool({
   host: process.env.DB_HOST,
-  port: process.env.DB_PORT,
+  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 11340,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
+  database: process.env.DB_NAME,
+  ssl: {
+    rejectUnauthorized: false // Wajib untuk Aiven MySQL
+  },
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
-db.connect((err) => {
-  if (err) {
-    console.error('Gagal terhubung ke database Aiven:', err);
-  } else {
-    console.log('Berhasil terhubung ke database Aiven MySQL!');
-  }
-});
+// Hapus atau beri komentar pada bagian db.connect() lama
+// karena mysql.createPool mengelola koneksi secara otomatis
 
 // 2. Setup Storage Cloudinary untuk Foto Selfie
 cloudinary.config({
@@ -276,41 +296,46 @@ app.post('/api/users', (req, res) => {
 // -----------------------------------------------------------------------------
 // ENDPOINT: LOGIN USER (POST /api/login)
 // -----------------------------------------------------------------------------
-app.post('/api/login', (req, res) => {
-  const { identifier, password } = req.body; // identifier bisa berisi Email atau NIP
+app.post('/api/login', async (req, res) => {
+  const { identifier, password } = req.body;
 
   if (!identifier || !password) {
-    return res.status(400).json({
-      success: false,
-      message: 'Email/NIP dan Password wajib diisi!'
-    });
+    return res.status(400).json({ message: 'NIP/Email dan Password wajib diisi.' });
   }
 
-  // Cari user berdasarkan email atau NIP dan password
-  const query = 'SELECT id, nip, nama_lengkap, email, peran FROM users WHERE (email = ? OR nip = ?) AND password = ?';
-  db.query(query, [identifier, identifier, password], (err, results) => {
-    if (err) {
-      return res.status(500).json({
-        success: false,
-        message: 'Terjadi kesalahan pada server.',
-        error: err.message
-      });
+  try {
+    // Cari user berdasarkan NIP atau Email
+    const [rows] = await db.query(
+      'SELECT id, nip, nama_lengkap, email, password, peran FROM users WHERE nip = ? OR email = ?',
+      [identifier, identifier]
+    );
+
+    if (rows.length === 0) {
+      return res.status(400).json({ message: 'NIP / Email tidak terdaftar.' });
     }
 
-    if (results.length === 0) {
-      return res.status(401).json({
-        success: false,
-        message: 'Email/NIP atau Password salah!'
-      });
+    const user = rows[0];
+
+    // Cek kecocokan password
+    if (user.password !== password) {
+      return res.status(400).json({ message: 'Password salah.' });
     }
 
-    const user = results[0];
+    // Kirim respon sukses beserta data user
     return res.status(200).json({
-      success: true,
-      message: 'Login berhasil!',
-      data: user
+      message: 'Login berhasil',
+      user: {
+        id: user.id,
+        nip: user.nip,
+        nama_lengkap: user.nama_lengkap,
+        email: user.email,
+        peran: user.peran
+      }
     });
-  });
+  } catch (err) {
+    console.error('Login Server Error:', err);
+    return res.status(500).json({ message: 'Terjadi kesalahan pada server.' });
+  }
 });
 
 // -----------------------------------------------------------------------------
