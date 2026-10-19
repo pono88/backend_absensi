@@ -113,7 +113,7 @@ app.post('/api/absensi/masuk', upload.single('foto'), async (req, res) => {
       });
     }
 
-    // Ambil URL Cloudinary langsung & Tanggal/Jam Akurat WITA
+    // Ambil URL Cloudinary & Tanggal/Jam Akurat WITA
     const fotoPath = fotoFile.path || fotoFile.secure_url;
     const { tanggal, jamFull } = getWITATime();
 
@@ -259,7 +259,7 @@ app.post('/api/users', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Akses ditolak.' });
     }
 
-    const requesterRole = userResults[0].peran;
+    const requesterRole = (userResults[0].peran || '').toLowerCase().trim();
 
     if (requesterRole !== 'admin_global') {
       return res.status(403).json({ success: false, message: 'Akses ditolak. Hanya Admin Global yang dapat membuat anggota baru!' });
@@ -360,7 +360,7 @@ app.put('/api/users/change-password', async (req, res) => {
 });
 
 // -----------------------------------------------------------------------------
-// ENDPOINT: REKAPAN / RIWAYAT ABSENSI SESUAI HIRARKI BARU
+// ENDPOINT: REKAPAN / RIWAYAT ABSENSI SESUAI HIRARKI & BATAS 7 HARI
 // -----------------------------------------------------------------------------
 app.get('/api/absensi/riwayat', async (req, res) => {
   const { user_id } = req.query;
@@ -381,7 +381,7 @@ app.get('/api/absensi/riwayat', async (req, res) => {
     let params = [];
 
     if (role === 'admin_global') {
-      // 1. Admin Global: Bisa lihat SEMUA riwayat tanpa batasan waktu
+      // 1. Admin Global: Lihat SEMUA riwayat tanpa batasan waktu
       query = `
         SELECT a.id, a.user_id, a.lokasi_id, a.tanggal, a.jam_masuk, a.jam_keluar, 
                a.foto_masuk, a.foto_keluar, u.nama_lengkap, u.nip, u.peran 
@@ -390,7 +390,7 @@ app.get('/api/absensi/riwayat', async (req, res) => {
         ORDER BY a.tanggal DESC, a.jam_masuk DESC
       `;
     } else if (role === 'manajer') {
-      // 2. Manajer: Bisa lihat riwayat SEMUANYA kecuali Admin Global (Maks 7 hari terakhir)
+      // 2. Manajer: Lihat seluruh anggota KECUALI Admin Global (Maks 7 hari terakhir)
       query = `
         SELECT a.id, a.user_id, a.lokasi_id, a.tanggal, a.jam_masuk, a.jam_keluar, 
                a.foto_masuk, a.foto_keluar, u.nama_lengkap, u.nip, u.peran 
@@ -401,7 +401,7 @@ app.get('/api/absensi/riwayat', async (req, res) => {
         ORDER BY a.tanggal DESC, a.jam_masuk DESC
       `;
     } else {
-      // 3. Admin & Karyawan: Hanya bisa lihat absensi DIRI SENDIRI (Maks 7 hari terakhir)
+      // 3. Admin & Karyawan: Hanya lihat absensi DIRI SENDIRI (Maks 7 hari terakhir)
       query = `
         SELECT a.id, a.user_id, a.lokasi_id, a.tanggal, a.jam_masuk, a.jam_keluar, 
                a.foto_masuk, a.foto_keluar, u.nama_lengkap, u.nip, u.peran 
@@ -423,6 +423,49 @@ app.get('/api/absensi/riwayat', async (req, res) => {
       message: 'Gagal mengambil riwayat absensi.', 
       error: err.message 
     });
+  }
+});
+
+// -----------------------------------------------------------------------------
+// ENDPOINT: HAPUS RIWAYAT ABSENSI (> 7 HARI) - KHUSUS ADMIN GLOBAL
+// -----------------------------------------------------------------------------
+app.delete('/api/absensi/:id', async (req, res) => {
+  const { id } = req.params;
+  const { requester_id } = req.body;
+
+  if (!requester_id) {
+    return res.status(400).json({ success: false, message: 'ID peminta (requester_id) diperlukan.' });
+  }
+
+  try {
+    const [userResults] = await db.query('SELECT peran FROM users WHERE id = ?', [requester_id]);
+    
+    if (!userResults || userResults.length === 0 || (userResults[0].peran || '').toLowerCase().trim() !== 'admin_global') {
+      return res.status(403).json({ success: false, message: 'Akses ditolak. Hanya Admin Global yang dapat menghapus data absensi!' });
+    }
+
+    // Proteksi: Mencegah penghapusan data 7 hari terakhir
+    const [checkRecent] = await db.query(
+      'SELECT id FROM absensi WHERE id = ? AND tanggal >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)',
+      [id]
+    );
+
+    if (checkRecent.length > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Akses ditolak. Data absensi 7 hari terakhir tidak boleh dihapus!' 
+      });
+    }
+
+    const [result] = await db.query('DELETE FROM absensi WHERE id = ?', [id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Data absensi tidak ditemukan.' });
+    }
+
+    return res.status(200).json({ success: true, message: 'Data absensi berhasil dihapus.' });
+  } catch (err) {
+    console.error('Error hapus absensi:', err);
+    return res.status(500).json({ success: false, message: 'Gagal menghapus data absensi.', error: err.message });
   }
 });
 
