@@ -15,6 +15,21 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 const PORT = process.env.PORT || 8000;
 
+// Helper untuk mendapatkan Tanggal & Jam zona WITA (Asia/Makassar)
+function getWITATime() {
+  const now = new Date();
+  const tanggal = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Makassar' }).format(now);
+  const jam = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Makassar',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).format(now);
+
+  return { tanggal, jamFull: `${tanggal} ${jam}` };
+}
+
 // 1. Koneksi Database MySQL Aiven dengan Pool & SSL
 const db = mysql.createPool({
   host: process.env.DB_HOST,
@@ -98,10 +113,9 @@ app.post('/api/absensi/masuk', upload.single('foto'), async (req, res) => {
       });
     }
 
-    // Ambil URL Cloudinary langsung
+    // Ambil URL Cloudinary langsung & Tanggal/Jam Akurat WITA
     const fotoPath = fotoFile.path || fotoFile.secure_url;
-    const tanggalSekarang = new Date().toISOString().split('T')[0];
-    const jamSekarang = new Date();
+    const { tanggal, jamFull } = getWITATime();
 
     const query = `
       INSERT INTO absensi (
@@ -113,8 +127,8 @@ app.post('/api/absensi/masuk', upload.single('foto'), async (req, res) => {
     const values = [
       user_id,
       lokasi_id,
-      tanggalSekarang,
-      jamSekarang,
+      tanggal,
+      jamFull,
       latitude,
       longitude,
       fotoPath
@@ -128,7 +142,8 @@ app.post('/api/absensi/masuk', upload.single('foto'), async (req, res) => {
       data: {
         absensi_id: result.insertId,
         user_id: user_id,
-        tanggal: tanggalSekarang,
+        tanggal: tanggal,
+        jam_masuk: jamFull,
         foto: fotoPath
       }
     });
@@ -156,12 +171,13 @@ app.post('/api/absensi/masuk', upload.single('foto'), async (req, res) => {
 app.post('/api/absensi/keluar', upload.single('foto'), async (req, res) => {
   const { user_id, latitude, longitude } = req.body;
   const fotoPath = req.file ? (req.file.path || req.file.secure_url) : null;
-  const tanggalSekarang = new Date().toISOString().split('T')[0];
-  const jamSekarang = new Date();
 
   if (!user_id || !latitude || !longitude || !fotoPath) {
     return res.status(400).json({ success: false, message: 'Data lokasi, foto, atau user ID tidak lengkap.' });
   }
+
+  // Ambil Tanggal & Jam Akurat WITA
+  const { tanggal, jamFull } = getWITATime();
 
   try {
     const query = `
@@ -170,7 +186,7 @@ app.post('/api/absensi/keluar', upload.single('foto'), async (req, res) => {
       WHERE user_id = ? AND tanggal = ? AND jam_keluar IS NULL
     `;
 
-    const [result] = await db.query(query, [jamSekarang, latitude, longitude, fotoPath, user_id, tanggalSekarang]);
+    const [result] = await db.query(query, [jamFull, latitude, longitude, fotoPath, user_id, tanggal]);
 
     if (result.affectedRows === 0) {
       return res.status(400).json({ 
