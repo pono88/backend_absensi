@@ -360,7 +360,7 @@ app.put('/api/users/change-password', async (req, res) => {
 });
 
 // -----------------------------------------------------------------------------
-// ENDPOINT: REKAPAN / RIWAYAT ABSENSI SESUAI HIRARKI (GET /api/absensi/riwayat)
+// ENDPOINT: REKAPAN / RIWAYAT ABSENSI SESUAI HIRARKI BARU
 // -----------------------------------------------------------------------------
 app.get('/api/absensi/riwayat', async (req, res) => {
   const { user_id } = req.query;
@@ -376,39 +376,39 @@ app.get('/api/absensi/riwayat', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Akses ditolak.' });
     }
 
-    const role = userResults[0].peran;
+    const role = (userResults[0].peran || '').toLowerCase().trim();
     let query = '';
     let params = [];
 
     if (role === 'admin_global') {
+      // 1. Admin Global: Bisa lihat SEMUA riwayat tanpa batasan waktu
       query = `
-        SELECT a.*, u.nama_lengkap, u.nip, u.peran 
+        SELECT a.id, a.user_id, a.lokasi_id, a.tanggal, a.jam_masuk, a.jam_keluar, 
+               a.foto_masuk, a.foto_keluar, u.nama_lengkap, u.nip, u.peran 
         FROM absensi a 
         JOIN users u ON a.user_id = u.id 
-        ORDER BY a.tanggal DESC, a.jam_masuk DESC
-      `;
-    } else if (role === 'admin') {
-      query = `
-        SELECT a.*, u.nama_lengkap, u.nip, u.peran 
-        FROM absensi a 
-        JOIN users u ON a.user_id = u.id 
-        WHERE u.peran != 'admin_global' 
         ORDER BY a.tanggal DESC, a.jam_masuk DESC
       `;
     } else if (role === 'manajer') {
+      // 2. Manajer: Bisa lihat riwayat SEMUANYA kecuali Admin Global (Maks 7 hari terakhir)
       query = `
-        SELECT a.*, u.nama_lengkap, u.nip, u.peran 
+        SELECT a.id, a.user_id, a.lokasi_id, a.tanggal, a.jam_masuk, a.jam_keluar, 
+               a.foto_masuk, a.foto_keluar, u.nama_lengkap, u.nip, u.peran 
         FROM absensi a 
         JOIN users u ON a.user_id = u.id 
-        WHERE u.peran NOT IN ('admin_global', 'admin') 
+        WHERE u.peran != 'admin_global' 
+          AND a.tanggal >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
         ORDER BY a.tanggal DESC, a.jam_masuk DESC
       `;
     } else {
+      // 3. Admin & Karyawan: Hanya bisa lihat absensi DIRI SENDIRI (Maks 7 hari terakhir)
       query = `
-        SELECT a.*, u.nama_lengkap, u.nip, u.peran 
+        SELECT a.id, a.user_id, a.lokasi_id, a.tanggal, a.jam_masuk, a.jam_keluar, 
+               a.foto_masuk, a.foto_keluar, u.nama_lengkap, u.nip, u.peran 
         FROM absensi a 
         JOIN users u ON a.user_id = u.id 
         WHERE a.user_id = ? 
+          AND a.tanggal >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
         ORDER BY a.tanggal DESC, a.jam_masuk DESC
       `;
       params = [user_id];
