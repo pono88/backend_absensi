@@ -469,6 +469,50 @@ app.delete('/api/absensi/:id', async (req, res) => {
   }
 });
 
+// -----------------------------------------------------------------------------
+// ENDPOINT: EKSPOR REKAPAN ABSENSI RENTANG TANGGAL (KHUSUS ADMIN GLOBAL)
+// -----------------------------------------------------------------------------
+app.get('/api/absensi/export', async (req, res) => {
+  const { user_id, start_date, end_date } = req.query;
+
+  if (!user_id || !start_date || !end_date) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Parameter user_id, start_date, dan end_date wajib diisi.' 
+    });
+  }
+
+  try {
+    const [userResults] = await db.query('SELECT peran FROM users WHERE id = ?', [user_id]);
+    
+    if (!userResults || userResults.length === 0 || (userResults[0].peran || '').toLowerCase().trim() !== 'admin_global') {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Akses ditolak. Hanya Admin Global yang dapat mengekspor data absensi!' 
+      });
+    }
+
+    const query = `
+      SELECT a.id, a.user_id, u.nip, u.nama_lengkap, u.peran, a.tanggal, 
+             a.jam_masuk, a.jam_keluar, a.status
+      FROM absensi a 
+      JOIN users u ON a.user_id = u.id 
+      WHERE a.tanggal BETWEEN ? AND ? 
+      ORDER BY a.tanggal ASC, a.jam_masuk ASC
+    `;
+
+    const [results] = await db.query(query, [start_date, end_date]);
+    return res.status(200).json({ success: true, data: results });
+  } catch (err) {
+    console.error('Error export absensi:', err);
+    return res.status(500).json({ 
+      success: false, 
+      message: 'Gagal mengambil data ekspor absensi.', 
+      error: err.message 
+    });
+  }
+});
+
 // Jalankan Server
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server REST API berjalan di http://localhost:${PORT}`);
